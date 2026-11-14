@@ -408,7 +408,7 @@ def launch_dashboard():
 
             f = open(filepath, mode="w", newline="")
             writer = csv.writer(f)
-            writer.writerow(["Timestamp", "State", "Throttle_PWM_us", "Thrust_g", "RPM", "Voltage_V", "Current_A"])
+            writer.writerow(["Timestamp", "Source", "State", "Throttle_PWM_us", "Thrust_g", "RPM", "Voltage_V", "Current_A"])
             f.flush()
 
             log_state["file"] = f
@@ -465,9 +465,10 @@ def launch_dashboard():
 
         if log_state["recording"] and log_state["writer"]:
             now_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            source_str = "REAL" if (ser and ser.is_open) else "SIM"
             mode_str = "ARMED" if system_state["armed"] else "IDLE"
             log_state["writer"].writerow([
-                now_time, mode_str, throttle_slider.get(),
+                now_time, source_str, mode_str, throttle_slider.get(),
                 thrust_s, rpm_s, volt_s, curr_s
             ])
             log_state["file"].flush()
@@ -597,10 +598,12 @@ def launch_dashboard():
 
     main_app.protocol("WM_DELETE_WINDOW", on_close)
     poll_serial()
-    main_app.mainloop()
+
+
+
 
     # ==========================================
-    # 3.97 AUTOMATED STEP TEST
+    # 3.97 AUTOMATED STEP TEST (MOVED ABOVE MAINLOOP)
     # ==========================================
     recent = deque(maxlen=400)           # (time, thrust, rpm, volt, curr) samples
     step = {"running": False, "i": 0}
@@ -610,7 +613,7 @@ def launch_dashboard():
     step_results = []
 
     def reset_step_button():
-        step_btn.config(text="RUN STEP TEST", bg="#2d2d2d", fg="#00ffcc")
+        step_btn.config(text="RUN STEP TEST", bg="#6f42c1", fg="#ffffff")
 
     def abort_step_test(reason):
         step["running"] = False
@@ -633,6 +636,10 @@ def launch_dashboard():
             for row in step_results:
                 w.writerow([source] + row)
         print(f"[STEP TEST]: saved -> {path}")
+        try:
+            os.startfile(path)
+        except Exception as e:
+            print(f"Could not auto-open step test CSV: {e}")
 
     def next_step():
         if not step["running"]:
@@ -680,16 +687,37 @@ def launch_dashboard():
         send_command("A")
         main_app.after(1000, next_step)
 
+    # Mounted directly into control_frame next to IDLE so it never gets pushed off-screen
     step_btn = tk.Button(
-        main_app,
+        control_frame,
         text="RUN STEP TEST",
-        bg="#2d2d2d",
-        fg="#00ffcc",
-        font=("Courier", 13, "bold"),
-        pady=8,
+        bg="#6f42c1",
+        fg="#ffffff",
+        font=("Courier", 14, "bold"),
+        width=18,
+        pady=10,
         command=start_step_test
     )
-    step_btn.pack(fill="x", padx=30, pady=(0, 5))
+    step_btn.pack(side="left", padx=10)
+
+    # ==========================================
+    # 5. SAFE SHUTDOWN & MAINLOOP START
+    # ==========================================
+    def on_close():
+        try:
+            if ser and ser.is_open:
+                ser.write(b"E\n")   # cut throttle before letting go of the port
+                ser.close()
+        except Exception as e:
+            print(f"Shutdown warning: {e}")
+        if log_state["file"]:
+            log_state["file"].close()
+        main_app.destroy()
+
+    main_app.protocol("WM_DELETE_WINDOW", on_close)
+    poll_serial()
+    main_app.mainloop()
+
 
 # ==========================================
 # BOOTER
