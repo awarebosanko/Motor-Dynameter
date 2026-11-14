@@ -8,7 +8,7 @@ import tkinter.font as tkfont
 from PIL import Image, ImageDraw, ImageFont
 
 # ==========================================
-# TUNING KNOBS (change these to learn how it works)
+# TUNING KNOBS
 # ==========================================
 W, H = 960, 600
 FONT_PX = 6              # hashtag size in PIXELS. 5 = even tinier, 8 = chunkier
@@ -31,7 +31,7 @@ RED_EASE = 1.5
 
 
 # ==========================================
-# Text -> grid mask (which character cells are "inside" the letters)
+# Text -> grid mask 
 # ==========================================
 def load_font(size):
     for path in ("C:/Windows/Fonts/impact.ttf", "C:/Windows/Fonts/arialbd.ttf"):
@@ -225,25 +225,86 @@ class WaterfallSplash:
 
 
 # ==========================================
-# THIS IS WHERE YOU WILL BUILD YOUR DASHBOARD
+# DASHBOARD
 # ==========================================
 def launch_dashboard():
     main_app = tk.Tk()
-    main_app.title("Propeller Dyna Pro - Control Center")
-    main_app.geometry("800x600")
+    main_app.title("PROPELLER DYNA PRO - CONTROL CENTER")
+    main_app.geometry("1200x800")
     main_app.configure(bg="#1e1e1e")
 
-    tk.Label(
-        main_app,
-        text="Aiden, the keyboard is yours. Let's build the GUI.",
-        fg="#00ffcc", bg="#1e1e1e", font=("Helvetica", 16)
-    ).pack(pady=250)
+    header_frame = tk.Frame(main_app, bg="#141414", pady=18)
+    header_frame.pack(fill="x")
+
+    title_label = tk.Label(
+        header_frame,
+        text="PROPELLER DYNA PRO - CONTROL CENTER",
+        fg="#ffffff",
+        bg="#141414",
+        font=("Courier", 16, "bold")
+    )
+    title_label.pack(side="left", padx=20)
+
+    state_label = tk.Label(
+        header_frame,
+        text="STATE: DISCONNECTED",
+        fg="#ffaa00",
+        bg="#141414",
+        font=("Courier", 16, "bold")
+    )
+    state_label.pack(side="right", padx=20)
+
+# 1. Function that fires when you click a button
+    def send_command(cmd):
+        print(f"Sending command to Teensy: {cmd}")
+
+    # 2. Sub-panel row to hold the buttons
+    control_frame = tk.Frame(main_app, bg="#1e1e1e", pady=20)
+    control_frame.pack(fill="x")
+
+    # 3. ARM Button (Green)
+    arm_btn = tk.Button(
+        control_frame,
+        text="ARM MOTOR (A)",
+        bg="#28a745",
+        fg="#ffffff",
+        font=("Courier", 14, "bold"),
+        width=16,
+        pady=10,
+        command=lambda: send_command("A")
+    )
+    arm_btn.pack(side="left", padx=20)
+
+    # 4. IDLE Button (Blue)
+    idle_btn = tk.Button(
+        control_frame,
+        text="IDLE (I)",
+        bg="#007acc",
+        fg="#ffffff",
+        font=("Courier", 14, "bold"),
+        width=16,
+        pady=10,
+        command=lambda: send_command("I")
+    )
+    idle_btn.pack(side="left", padx=10)
+
+    # 5. E-STOP Button (Big Red Button pinned to the right)
+    estop_btn = tk.Button(
+        control_frame,
+        text="EMERGENCY STOP (E)",
+        bg="#dc3545",
+        fg="#ffffff",
+        font=("Courier", 14, "bold"),
+        width=22,
+        pady=10,
+        command=lambda: send_command("E")
+    )
+    estop_btn.pack(side="right", padx=20)
 
     main_app.mainloop()
 
-
 # ==========================================
-# BOOT SEQUENCE
+# BOOTER
 # ==========================================
 if __name__ == "__main__":
     splash = tk.Tk()
@@ -254,3 +315,4 @@ if __name__ == "__main__":
     sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
     splash.geometry(f"{app.width}x{app.height}+{int(sw/2 - app.width/2)}+{int(sh/2 - app.height/2)}")
     splash.mainloop()
+
