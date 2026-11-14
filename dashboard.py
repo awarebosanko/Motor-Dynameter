@@ -25,8 +25,9 @@ HALO_X, HALO_Y = 4, 2    # dark gap around letters where the rain parts
 T_NAME = 110             # rain has been falling this long, then your name forms
 T_CLEAR_1 = 250          # name starts washing away
 T_TITLE_2 = 310          # second title starts forming (keep ~60 after T_CLEAR_1)
-T_RED_START, T_RED_END = 340, 480
-T_EXIT = 525
+T_RED_START, T_RED_END = 335, 430
+T_EXIT = 475
+RED_EASE = 1.5
 
 
 # ==========================================
@@ -194,7 +195,7 @@ class WaterfallSplash:
         self.push(self.edge_rows, "edge", edge_on)
 
     def update_red_gradient(self, progress):
-        eased = progress ** 2.4  # slow creep, then settles
+        eased = progress ** RED_EASE  # slow creep, then settles
         for i, rect in enumerate(self.strips):
             curve = (i / self.num_strips) ** 1.6
             red = int(MAX_RED * curve * eased)
