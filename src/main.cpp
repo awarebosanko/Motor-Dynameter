@@ -31,6 +31,7 @@ void printStateChange(SystemState newState) {
 //System precheck
 void setup(){
   Serial.begin(115200);
+  Serial.setTimeout(20);
   pinMode(ledPin, OUTPUT); 
   esc.attach(6);
   esc.writeMicroseconds(1000);
@@ -90,9 +91,13 @@ void loop(){
           currentstate = STATE_STOP;
         }
         else if (command == 'T') {
-          int throttle = Serial.parseInt(); 
+          int throttle = constrain(Serial.parseInt(), 1000, 2000);
           esc.writeMicroseconds(throttle);  
           LastCommandTime = millis();       
+        }
+                else if (command == 'I') {
+          esc.writeMicroseconds(1000);
+          currentstate = STATE_IDLE;
         }
       } 
 

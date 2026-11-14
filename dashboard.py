@@ -457,6 +457,12 @@ def launch_dashboard():
         voltage_val_lbl.config(text=volt_s)
         current_val_lbl.config(text=curr_s)
 
+        try:
+            update_graphs(float(thrust_s), float(rpm_s))
+            recent.append((time.time(), float(thrust_s), float(rpm_s), float(volt_s), float(curr_s)))
+        except ValueError:
+            pass  # ignore a garbled line from the Teensy
+
         if log_state["recording"] and log_state["writer"]:
             now_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             mode_str = "ARMED" if system_state["armed"] else "IDLE"
@@ -578,10 +584,112 @@ def launch_dashboard():
             )
 
         main_app.after(100, poll_serial)
+    def on_close():
+        try:
+            if ser and ser.is_open:
+                ser.write(b"E\n")   # cut throttle before letting go of the port
+                ser.close()
+        except Exception as e:
+            print(f"Shutdown warning: {e}")
+        if log_state["file"]:
+            log_state["file"].close()
+        main_app.destroy()
 
+    main_app.protocol("WM_DELETE_WINDOW", on_close)
     poll_serial()
     main_app.mainloop()
 
+    # ==========================================
+    # 3.97 AUTOMATED STEP TEST
+    # ==========================================
+    recent = deque(maxlen=400)           # (time, thrust, rpm, volt, curr) samples
+    step = {"running": False, "i": 0}
+    SETPOINTS = list(range(1100, 2001, 100))
+    HOLD_MS = 3000                       # time spent at each setpoint
+    AVG_MS = 1000                        # average only the last 1 s of each hold
+    step_results = []
+
+    def reset_step_button():
+        step_btn.config(text="RUN STEP TEST", bg="#2d2d2d", fg="#00ffcc")
+
+    def abort_step_test(reason):
+        step["running"] = False
+        reset_step_button()
+        print(f"[STEP TEST]: aborted ({reason})")
+
+    def finish_step_test():
+        step["running"] = False
+        throttle_slider.set(1000)
+        send_command("I")
+        reset_step_button()
+
+        source = "REAL" if (ser and ser.is_open) else "SIM"
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, f"step_test_{source}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["Source", "PWM_us", "Thrust_g", "RPM", "Voltage_V", "Current_A", "Power_W", "g_per_W"])
+            for row in step_results:
+                w.writerow([source] + row)
+        print(f"[STEP TEST]: saved -> {path}")
+
+    def next_step():
+        if not step["running"]:
+            return
+        if not system_state["armed"]:
+            abort_step_test("disarmed")
+            return
+        if step["i"] >= len(SETPOINTS):
+            finish_step_test()
+            return
+        throttle_slider.set(SETPOINTS[step["i"]])
+        main_app.after(HOLD_MS, record_step)
+
+    def record_step():
+        if not step["running"]:
+            return
+        if not system_state["armed"]:
+            abort_step_test("disarmed")
+            return
+        now = time.time()
+        pts = [p for p in recent if now - p[0] <= AVG_MS / 1000]
+        if not pts:
+            abort_step_test("no telemetry")
+            return
+        n = len(pts)
+        thrust = sum(p[1] for p in pts) / n
+        rpm    = sum(p[2] for p in pts) / n
+        volt   = sum(p[3] for p in pts) / n
+        curr   = sum(p[4] for p in pts) / n
+        power  = volt * curr
+        gpw    = thrust / power if power > 0 else 0.0
+        step_results.append([SETPOINTS[step["i"]], round(thrust, 1), round(rpm), round(volt, 2),
+                             round(curr, 2), round(power, 1), round(gpw, 3)])
+        step["i"] += 1
+        next_step()
+
+    def start_step_test():
+        if step["running"]:
+            return
+        step["running"] = True
+        step["i"] = 0
+        step_results.clear()
+        recent.clear()
+        step_btn.config(text="STEP TEST RUNNING (E-STOP TO ABORT)", bg="#ff8800", fg="#000000")
+        send_command("A")
+        main_app.after(1000, next_step)
+
+    step_btn = tk.Button(
+        main_app,
+        text="RUN STEP TEST",
+        bg="#2d2d2d",
+        fg="#00ffcc",
+        font=("Courier", 13, "bold"),
+        pady=8,
+        command=start_step_test
+    )
+    step_btn.pack(fill="x", padx=30, pady=(0, 5))
 
 # ==========================================
 # BOOTER
