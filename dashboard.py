@@ -360,12 +360,33 @@ def launch_dashboard():
         main_app.after(100, send_throttle)
 
     send_throttle()
+
+# ==========================================
+    # 3.8 LIVE TELEMETRY READOUT CARDS
+    # ==========================================
+    telemetry_frame = tk.Frame(main_app, bg="#1e1e1e", pady=10)
+    telemetry_frame.pack(fill="x", padx=20)
+
+    def create_gauge_card(parent, title, unit, col):
+        card = tk.Frame(parent, bg="#141414", padx=25, pady=15, highlightthickness=1, highlightbackground="#2d2d2d")
+        card.grid(row=0, column=col, padx=10, sticky="nsew")
+        parent.grid_columnconfigure(col, weight=1)
+
+        tk.Label(card, text=f"{title} ({unit})", fg="#888888", bg="#141414", font=("Courier", 12, "bold")).pack(anchor="w")
+        val_label = tk.Label(card, text="0.0", fg="#00ffcc", bg="#141414", font=("Courier", 28, "bold"))
+        val_label.pack(anchor="w", pady=(5, 0))
+        return val_label
+
+    thrust_val_lbl  = create_gauge_card(telemetry_frame, "THRUST", "g", 0)
+    rpm_val_lbl     = create_gauge_card(telemetry_frame, "MOTOR SPEED", "RPM", 1)
+    voltage_val_lbl = create_gauge_card(telemetry_frame, "VOLTAGE", "V", 2)
+    current_val_lbl = create_gauge_card(telemetry_frame, "CURRENT", "A", 3)
+
     # ==========================================
     # 4. SERIAL LISTENER & 100ms HEARTBEAT LOOP
     # ==========================================
     def poll_serial():
         if ser and ser.is_open:
-            # Read incoming status messages from Teensy
             while ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
                 if line:
@@ -377,10 +398,19 @@ def launch_dashboard():
                     elif "STATE: STOP" in line:
                         state_label.config(text="STATE: E-STOPPED", fg="#dc3545")
                         system_state["armed"] = False
+                        throttle_slider.set(1000)
+                    elif line.startswith("DATA,"):
+                        parts = line.split(",")
+                        if len(parts) == 5:
+                            thrust_val_lbl.config(text=parts[1])
+                            rpm_val_lbl.config(text=parts[2])
+                            voltage_val_lbl.config(text=parts[3])
+                            current_val_lbl.config(text=parts[4])
 
-            # Send continuous heartbeat while armed so the 500ms failsafe stays happy
+            # Send live slider value every 100ms while armed
             if system_state["armed"]:
-                ser.write(b"T1000\n")
+                current_pwm = throttle_slider.get()
+                ser.write(f"T{current_pwm}\n".encode('utf-8'))
 
         main_app.after(100, poll_serial)
 
