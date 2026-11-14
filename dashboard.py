@@ -233,6 +233,9 @@ def launch_dashboard():
     main_app.geometry("1200x800")
     main_app.configure(bg="#1e1e1e")
 
+    # ==========================================
+    # 1. HEADER & LIVE STATE READOUT
+    # ==========================================
     header_frame = tk.Frame(main_app, bg="#141414", pady=18)
     header_frame.pack(fill="x")
 
@@ -254,15 +257,34 @@ def launch_dashboard():
     )
     state_label.pack(side="right", padx=20)
 
-# 1. Function that fires when you click a button
+    # ==========================================
+    # 2. USB SERIAL CONNECTION (COM5)
+    # ==========================================
+    ser = None
+    system_state = {"armed": False}
+
+    try:
+        ser = serial.Serial('COM5', 115200, timeout=0.01)
+        state_label.config(text="STATE: CONNECTED (WAITING)", fg="#00ffcc")
+    except Exception as e:
+        print(f"Could not open COM5: {e}")
+        state_label.config(text="STATE: DISCONNECTED", fg="#ffaa00")
+
+    # ==========================================
+    # 3. COMMAND SENDER & CONTROL DECK BUTTONS
+    # ==========================================
     def send_command(cmd):
         print(f"Sending command to Teensy: {cmd}")
+        if ser and ser.is_open:
+            ser.write((cmd + "\n").encode('utf-8'))
+            if cmd == "A":
+                system_state["armed"] = True
+            elif cmd in ["I", "E"]:
+                system_state["armed"] = False
 
-    # 2. Sub-panel row to hold the buttons
     control_frame = tk.Frame(main_app, bg="#1e1e1e", pady=20)
     control_frame.pack(fill="x")
 
-    # 3. ARM Button (Green)
     arm_btn = tk.Button(
         control_frame,
         text="ARM MOTOR (A)",
@@ -275,7 +297,6 @@ def launch_dashboard():
     )
     arm_btn.pack(side="left", padx=20)
 
-    # 4. IDLE Button (Blue)
     idle_btn = tk.Button(
         control_frame,
         text="IDLE (I)",
@@ -288,7 +309,6 @@ def launch_dashboard():
     )
     idle_btn.pack(side="left", padx=10)
 
-    # 5. E-STOP Button (Big Red Button pinned to the right)
     estop_btn = tk.Button(
         control_frame,
         text="EMERGENCY STOP (E)",
@@ -301,6 +321,70 @@ def launch_dashboard():
     )
     estop_btn.pack(side="right", padx=20)
 
+    # ==========================================
+    # 3.5 THROTTLE CONTROL SLIDER (1000 - 2000 us)
+    # ==========================================
+    throttle_frame = tk.Frame(main_app, bg="#141414", pady=15)
+    throttle_frame.pack(fill="x", padx=20, pady=10)
+
+    throttle_label = tk.Label(
+        throttle_frame,
+        text="THROTTLE PWM (µs):",
+        fg="#ffffff",
+        bg="#141414",
+        font=("Courier", 14, "bold")
+    )
+    throttle_label.pack(side="left", padx=20)
+
+    throttle_slider = tk.Scale(
+        throttle_frame,
+        from_=1000,
+        to=2000,
+        resolution=10,          # Steps by 10 microseconds
+        orient="horizontal",
+        bg="#141414",
+        fg="#00ffcc",
+        troughcolor="#2d2d2d",
+        highlightthickness=0,
+        font=("Courier", 12, "bold"),
+        length=600
+    )
+    throttle_slider.set(1000)
+    throttle_slider.pack(side="left", padx=20)
+
+    # Send live slider value every 100ms while armed
+    def send_throttle():
+        if system_state["armed"]:
+            current_pwm = throttle_slider.get()
+            ser.write(f"T{current_pwm}\n".encode('utf-8'))
+        main_app.after(100, send_throttle)
+
+    send_throttle()
+    # ==========================================
+    # 4. SERIAL LISTENER & 100ms HEARTBEAT LOOP
+    # ==========================================
+    def poll_serial():
+        if ser and ser.is_open:
+            # Read incoming status messages from Teensy
+            while ser.in_waiting > 0:
+                line = ser.readline().decode('utf-8', errors='ignore').strip()
+                if line:
+                    print(f"[Teensy]: {line}")
+                    if "STATE: IDLE" in line:
+                        state_label.config(text="STATE: IDLE", fg="#007acc")
+                    elif "STATE: TESTING" in line:
+                        state_label.config(text="STATE: TESTING (ARMED)", fg="#28a745")
+                    elif "STATE: STOP" in line:
+                        state_label.config(text="STATE: E-STOPPED", fg="#dc3545")
+                        system_state["armed"] = False
+
+            # Send continuous heartbeat while armed so the 500ms failsafe stays happy
+            if system_state["armed"]:
+                ser.write(b"T1000\n")
+
+        main_app.after(100, poll_serial)
+
+    poll_serial()
     main_app.mainloop()
 
 # ==========================================
