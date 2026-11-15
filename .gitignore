@@ -10,3 +10,5 @@ logs/*.csv
 *.asv
 .DS_Store
 Thumbs.db
+
+.pio/
