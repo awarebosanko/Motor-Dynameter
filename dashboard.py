@@ -511,20 +511,24 @@ def launch_dashboard():
     graph_canvas = FigureCanvasTkAgg(fig, master=main_app)
     graph_canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=10)
 
+    draw_counter = {"n": 0}
+
     def update_graphs(thrust, rpm):
         t_data.append(time.time() - t_start)
         thrust_data.append(thrust)
         rpm_data.append(rpm)
         pwm_data.append(throttle_slider.get())
 
-        thrust_line.set_data(list(t_data), list(thrust_data))
-        rpm_line.set_data(list(t_data), list(rpm_data))
-        pwm_line.set_data(list(t_data), list(pwm_data))
+        draw_counter["n"] += 1
+        if draw_counter["n"] % 5 == 0:  # Redraw plots at 10 Hz while logging at 50 Hz
+            thrust_line.set_data(list(t_data), list(thrust_data))
+            rpm_line.set_data(list(t_data), list(rpm_data))
+            pwm_line.set_data(list(t_data), list(pwm_data))
 
-        for ax in (ax_thrust, ax_rpm, ax_pwm):
-            ax.relim()
-            ax.autoscale_view()
-        graph_canvas.draw_idle()
+            for ax in (ax_thrust, ax_rpm, ax_pwm):
+                ax.relim()
+                ax.autoscale_view()
+            graph_canvas.draw_idle()
 
     # ==========================================
     # 4. SERIAL LISTENER + FEIGNED TELEMETRY ENGINE
@@ -584,23 +588,7 @@ def launch_dashboard():
                 f"{sim_curr:.2f}"
             )
 
-        main_app.after(100, poll_serial)
-    def on_close():
-        try:
-            if ser and ser.is_open:
-                ser.write(b"E\n")   # cut throttle before letting go of the port
-                ser.close()
-        except Exception as e:
-            print(f"Shutdown warning: {e}")
-        if log_state["file"]:
-            log_state["file"].close()
-        main_app.destroy()
-
-    main_app.protocol("WM_DELETE_WINDOW", on_close)
-    poll_serial()
-
-
-
+        main_app.after(20, poll_serial)
 
     # ==========================================
     # 3.97 AUTOMATED STEP TEST (MOVED ABOVE MAINLOOP)
@@ -699,6 +687,18 @@ def launch_dashboard():
         command=start_step_test
     )
     step_btn.pack(side="left", padx=10)
+
+    tare_btn = tk.Button(
+        control_frame,
+        text="TARE (Z)",
+        bg="#444444",
+        fg="#00ffcc",
+        font=("Courier", 14, "bold"),
+        width=11,
+        pady=10,
+        command=lambda: send_command("Z")
+    )
+    tare_btn.pack(side="left", padx=10)
 
     # ==========================================
     # 5. SAFE SHUTDOWN & MAINLOOP START

@@ -1,134 +1,228 @@
-// This test stand coded by Aiden Ware Bosanko
 #include <Arduino.h>
 #include <Servo.h>
 
-// Inital Set up
+// ==========================================
+// 1. PIN DEFINITIONS & HARDWARE CONFIG
+// ==========================================
+const int ESC_PIN       = 2;   // PWM output to ESC signal wire (Teensy 4.1 FlexPWM pin)
+const int LED_PIN       = 13;  // Built-in status LED
+const int RPM_PIN       = 3;   // Optical / Hall tachometer interrupt pin
+const int VOLT_PIN      = A0;  // Voltage divider analog pin
+const int CURR_PIN      = A1;  // Current sensor analog pin
+
+// Calibration constants (tune once physical sensors are mounted)
+float thrust_tare_offset = 0.0f;
+float thrust_scale       = 1.0f;
+const float VOLT_SCALE   = 11.0f * (3.3f / 1023.0f); // Example 10:1 divider on 3.3V ADC
+const float CURR_SCALE   = 30.0f * (3.3f / 1023.0f); // Example 30A sensor on 3.3V ADC
+const int   MOTOR_POLES  = 14;                       // 2806.5 brushless motor = 14 poles (7 pole pairs)
+
+// ==========================================
+// 2. STATE MACHINE & TIMING VARIABLES
+// ==========================================
 enum SystemState {
   STATE_IDLE,
   STATE_TESTING,
   STATE_STOP
 };
 
-SystemState currentstate = STATE_IDLE;
-SystemState previousstate = STATE_IDLE; // Tracks changes so we don't flood the serial monitor
-
-unsigned long LoadCellLastTime = 0;
-unsigned long LastCommandTime = 0;
+SystemState currentState = STATE_IDLE;
 Servo esc;
 
-// LED state status
-const int ledPin = 13; // Teensy 4.1 led
-unsigned long LedLastTime = 0;
+int targetThrottle = 1000;
+unsigned long lastHeartbeatTime = 0;
+const unsigned long FAILSAFE_TIMEOUT_MS = 500;
+
+// Telemetry & LED timers
+unsigned long lastTelemetryTime = 0;
+const unsigned long TELEMETRY_INTERVAL_MS = 20; // 50 Hz broadcast rate
+
+unsigned long lastBlinkTime = 0;
 bool ledState = false;
 
-// Helper function to print state changes cleanly
-void printStateChange(SystemState newState) {
-  if (newState == STATE_IDLE) Serial.println("\n>>> STATE: IDLE (Awaiting 'A' to Arm)");
-  else if (newState == STATE_TESTING) Serial.println("\n>>> STATE: TESTING (Motor Armed)");
-  else if (newState == STATE_STOP) Serial.println("\n>>> STATE: STOP (Motor Killed)");
+// RPM interrupt counter
+volatile unsigned long rpmPulseCount = 0;
+unsigned long lastRpmCalcTime = 0;
+int currentRpm = 0;
+
+void rpmISR() {
+  rpmPulseCount++;
 }
 
-//System precheck
-void setup(){
-  Serial.begin(115200);
-  Serial.setTimeout(20);
-  pinMode(ledPin, OUTPUT); 
-  esc.attach(6);
-  esc.writeMicroseconds(1000);
-
-  // Give the serial monitor a second to open, then print the starting state
-  delay(1000);
-  Serial.println("System Initialized.");
-  printStateChange(currentstate);
+// ==========================================
+// 3. SENSOR READ & TARE FUNCTIONS
+// ==========================================
+float readRawThrust() {
+  // TODO: Replace with HX711.get_units() once load cell is wired
+  // Simulated response tied to throttle so you can test live USB packets right now
+  if (currentState == STATE_TESTING && targetThrottle > 1000) {
+    float pct = (targetThrottle - 1000) / 1000.0f;
+    return (pct * pct) * 1400.0f;
+  }
+  return 0.0f;
 }
 
-void loop(){
-  // 1. STATE CHANGE DETECTOR
-  // If the state just changed, print the new state, then update the tracker
-  if (currentstate != previousstate) {
-    printStateChange(currentstate);
-    previousstate = currentstate;
+void tareLoadCell() {
+  thrust_tare_offset = readRawThrust();
+  Serial.println("INFO: Load cell tared");
+}
+
+int updateRpm() {
+  unsigned long now = millis();
+  unsigned long dt = now - lastRpmCalcTime;
+  if (dt >= 100) { // Calculate RPM every 100 ms
+    noInterrupts();
+    unsigned long pulses = rpmPulseCount;
+    rpmPulseCount = 0;
+    interrupts();
+
+    // If no physical tachometer pulses yet during testing, mirror throttle
+    if (pulses == 0 && currentState == STATE_TESTING && targetThrottle > 1000) {
+      float pct = (targetThrottle - 1000) / 1000.0f;
+      currentRpm = (int)(pct * 18000.0f);
+    } else {
+      float revs = (float)pulses / (MOTOR_POLES / 2.0f);
+      currentRpm = (int)((revs / (dt / 1000.0f)) * 60.0f);
+    }
+    lastRpmCalcTime = now;
+  }
+  return currentRpm;
+}
+
+// ==========================================
+// 4. LED STATUS FEEDBACK
+// ==========================================
+void updateStatusLED() {
+  unsigned long now = millis();
+  unsigned long interval = 1000;
+
+  if (currentState == STATE_IDLE) {
+    interval = 1000; // Slow heartbeat (1 Hz)
+  } else if (currentState == STATE_TESTING) {
+    interval = 250;  // Fast active blink (4 Hz)
+  } else if (currentState == STATE_STOP) {
+    interval = 80;   // Rapid strobe warning (12.5 Hz)
   }
 
-  // 2. THE STATE MACHINE
-  switch (currentstate){
-    
+  if (now - lastBlinkTime >= interval) {
+    ledState = !ledState;
+    digitalWrite(LED_PIN, ledState);
+    lastBlinkTime = now;
+  }
+}
+
+// ==========================================
+// 5. SETUP
+// ==========================================
+void setup() {
+  Serial.begin(115200);
+  Serial.setTimeout(20); // Critical: prevents parseInt() from tripping 500ms failsafe
+
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(RPM_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(RPM_PIN), rpmISR, FALLING);
+
+  esc.attach(ESC_PIN, 1000, 2000);
+  esc.writeMicroseconds(1000);
+
+  tareLoadCell();
+  Serial.println("STATE: IDLE");
+}
+
+// ==========================================
+// 6. MAIN REAL-TIME CONTROL LOOP
+// ==========================================
+void loop() {
+  unsigned long now = millis();
+
+  // --- A. PARSE INCOMING SERIAL COMMANDS ---
+  while (Serial.available() > 0) {
+    char cmd = Serial.read();
+
+    if (cmd == '\n' || cmd == '\r' || cmd == ' ') {
+      continue;
+    }
+
+    if (cmd == 'E') {
+      // Universal E-Stop overrides every state immediately
+      targetThrottle = 1000;
+      esc.writeMicroseconds(1000);
+      currentState = STATE_STOP;
+      Serial.println("STATE: STOP");
+    }
+    else if (cmd == 'Z') {
+      // Zero / Tare load cell
+      tareLoadCell();
+    }
+    else if (cmd == 'A') {
+      if (currentState == STATE_IDLE) {
+        targetThrottle = 1000;
+        esc.writeMicroseconds(1000);
+        lastHeartbeatTime = now;
+        currentState = STATE_TESTING;
+        Serial.println("STATE: TESTING");
+      }
+    }
+    else if (cmd == 'I') {
+      if (currentState == STATE_TESTING || currentState == STATE_STOP) {
+        targetThrottle = 1000;
+        esc.writeMicroseconds(1000);
+        currentState = STATE_IDLE;
+        Serial.println("STATE: IDLE");
+      }
+    }
+    else if (cmd == 'T') {
+      int val = Serial.parseInt();
+      if (currentState == STATE_TESTING) {
+        targetThrottle = constrain(val, 1000, 2000);
+        lastHeartbeatTime = now; // Reset 500ms watchdog timer
+      }
+    }
+  }
+
+  // --- B. STATE MACHINE EXECUTION ---
+  switch (currentState) {
     case STATE_IDLE:
-      // Slow blink
-      if (millis() - LedLastTime >= 1000){
-        LedLastTime = millis();
-        ledState = !ledState;
-        digitalWrite(ledPin, ledState);
-      }
-      if (Serial.available() > 0){
-        char command = Serial.read();
-        if (command == 'A'){
-          currentstate = STATE_TESTING;
-          LastCommandTime = millis(); 
-        }
-      }
+      targetThrottle = 1000;
+      esc.writeMicroseconds(1000);
       break;
 
     case STATE_TESTING:
-      // Fast led blink
-      if (millis() - LedLastTime >= 100){
-        LedLastTime = millis();
-        ledState = !ledState;
-        digitalWrite(ledPin, ledState);
-      }
-
-      // 1. The Failsafe (Outside the Serial block, set to 500ms)
-      if (millis() - LastCommandTime > 500){
-        Serial.println("FAILSAFE TRIGGERED: No heartbeat received in 500ms!");
-        currentstate = STATE_STOP;
-      }
-      
-      // 2. USB Command Parser
-      if (Serial.available() > 0){
-        char command = Serial.read();
-        if (command == 'E'){
-          Serial.println("E-STOP TRIGGERED via USB Command!");
-          currentstate = STATE_STOP;
-        }
-        else if (command == 'T') {
-          int throttle = constrain(Serial.parseInt(), 1000, 2000);
-          esc.writeMicroseconds(throttle);  
-          LastCommandTime = millis();       
-        }
-                else if (command == 'I') {
-          esc.writeMicroseconds(1000);
-          currentstate = STATE_IDLE;
-        }
-      } 
-
-      // 3. Load cell timer
-      if (millis() - LoadCellLastTime >= 50){
-        LoadCellLastTime = millis();
+      // Watchdog Failsafe Check
+      if (now - lastHeartbeatTime > FAILSAFE_TIMEOUT_MS) {
+        targetThrottle = 1000;
+        esc.writeMicroseconds(1000);
+        currentState = STATE_STOP;
+        Serial.println("FAILSAFE: HEARTBEAT TIMEOUT");
+        Serial.println("STATE: STOP");
+      } else {
+        esc.writeMicroseconds(targetThrottle);
       }
       break;
 
     case STATE_STOP:
-      // 1. Solid Light
-      digitalWrite(ledPin, HIGH);
-
-      // 2. KILL THE MOTOR
+      targetThrottle = 1000;
       esc.writeMicroseconds(1000);
-      
-      // 3. Route to other modes
-      if (Serial.available() > 0) {
-        char command = Serial.read();
-        
-        if (command == 'A') {
-          // Re-arm directly to testing
-          currentstate = STATE_TESTING;
-          LastCommandTime = millis(); 
-        }
-        else if (command == 'I') {
-          // Fall back to idle mode safely
-          currentstate = STATE_IDLE;
-          digitalWrite(ledPin, LOW); 
-        }
-      }
       break;
   }
+
+  // --- C. 50 HZ TELEMETRY BROADCAST ---
+  if (now - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
+    lastTelemetryTime = now;
+
+    float thrust_g = (readRawThrust() - thrust_tare_offset) * thrust_scale;
+    int   rpm      = updateRpm();
+    
+    // Read analog pins (or provide clean nominal fallback if pins are floating/unwired)
+    float voltage  = 16.80f; // Replace with: analogRead(VOLT_PIN) * VOLT_SCALE;
+    float current  = (currentState == STATE_TESTING && targetThrottle > 1000) 
+                     ? ((targetThrottle - 1000) / 1000.0f) * 25.0f : 0.05f;
+                     // Replace with: analogRead(CURR_PIN) * CURR_SCALE;
+
+    // Broadcast CSV packet: DATA,thrust,rpm,volt,curr
+    Serial.printf("DATA,%.1f,%d,%.2f,%.2f\n", thrust_g, rpm, voltage, current);
+  }
+
+  // --- D. UPDATE VISUAL STATUS LED ---
+  updateStatusLED();
 }
