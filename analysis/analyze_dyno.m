@@ -1,4 +1,4 @@
-% =========================================================================
+﻿% =========================================================================
 % PROPELLER DYNA PRO - MATLAB PROPULSION & AERODYNAMIC ANALYZER
 % Replaces eCalc: Fits Thrust vs PWM, Thrust vs RPM^2, g/W, Ct/Cp, Kv/Kt
 % =========================================================================
@@ -10,7 +10,7 @@ rho    = 1.225;             % Air density (kg/m^3) - 1.225 standard sea level
 D      = D_inch * 0.0254;   % Diameter in meters
 
 % --- 2. AUTO-LOAD LATEST STEP TEST CSV FROM logs/ ---
-files = dir(fullfile('logs', 'step_test_*.csv'));
+files = dir(fullfile('..', 'logs', 'step_test_*.csv'));
 if isempty(files)
     error('No step_test_*.csv files found in logs/ folder! Run a Step Test first.');
 end

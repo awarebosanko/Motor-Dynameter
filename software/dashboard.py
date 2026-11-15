@@ -1,4 +1,4 @@
-# This dashboard was developed by Aiden Ware Bosanko
+﻿# This dashboard was developed by Aiden Ware Bosanko
 import serial
 import numpy as np
 import tkinter as tk
@@ -484,14 +484,14 @@ def launch_dashboard():
     section_lbl(rail, "THROTTLE SETPOINT")
     thr_top = tk.Frame(rail, bg=C_VOID)
     thr_top.pack(fill="x")
-    thr_val_lbl = tk.Label(thr_top, text="1000 µs", fg=C_WHITE, bg=C_VOID, font=(MONO_FONT, 15, "bold"))
+    thr_val_lbl = tk.Label(thr_top, text="1000 Âµs", fg=C_WHITE, bg=C_VOID, font=(MONO_FONT, 15, "bold"))
     thr_val_lbl.pack(side="left")
     thr_pct_lbl = tk.Label(thr_top, text="0%", fg=C_SILVER, bg=C_VOID, font=(MONO_FONT, 10))
     thr_pct_lbl.pack(side="right", pady=(4, 0))
 
     def on_throttle_change(val):
         pct = ((val - 1000) / 1000.0) * 100.0
-        thr_val_lbl.config(text=f"{val} µs")
+        thr_val_lbl.config(text=f"{val} Âµs")
         thr_pct_lbl.config(text=f"{pct:.0f}%")
 
     throttle_slider = VernierThrottle(rail, min_val=1000, max_val=2000, step=10, on_change=on_throttle_change)
@@ -656,7 +656,7 @@ def launch_dashboard():
 
     style_ax(ax_thrust, "THRUST  (g)")
     style_ax(ax_rpm, "SPEED  (RPM)")
-    style_ax(ax_pwm, "COMMAND  (µs)")
+    style_ax(ax_pwm, "COMMAND  (Âµs)")
     ax_pwm.set_xlabel("TIME (s)", color=C_MUTED, fontsize=8, fontweight="bold")
 
     (thrust_line,) = ax_thrust.plot([], [], color=C_WHITE, linewidth=1.6, animated=True)
@@ -734,7 +734,7 @@ def launch_dashboard():
 
     def toggle_logging():
         if not log_state["recording"]:
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+            log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
             os.makedirs(log_dir, exist_ok=True)
             filename = f"dyna_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             filepath = os.path.join(log_dir, filename)
@@ -820,7 +820,7 @@ def launch_dashboard():
         reset_step_button()
 
         source = "REAL" if (ser and ser.is_open) else "SIM"
-        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
         os.makedirs(log_dir, exist_ok=True)
         path = os.path.join(log_dir, f"step_test_{source}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         with open(path, "w", newline="") as f:
@@ -845,7 +845,7 @@ def launch_dashboard():
             return
         sp = SETPOINTS[step["i"]]
         throttle_slider.set(sp)
-        log_event(f"Step {step['i']+1}/{len(SETPOINTS)} -> {sp} µs", "INFO")
+        log_event(f"Step {step['i']+1}/{len(SETPOINTS)} -> {sp} Âµs", "INFO")
         main_app.after(HOLD_MS, record_step)
 
     def record_step():
